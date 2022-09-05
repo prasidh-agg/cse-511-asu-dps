@@ -60,12 +60,14 @@ CREATE TABLE tags(
 
 -- Combination of movieid and genre used as a composite key to
 -- identify a unique hasagenre entry
-CREATE TABLE hasagenre(
-	movieid INTEGER,
+CREATE TABLE hasagenre (
+    movieid INTEGER,
     genreid INTEGER,
-    PRIMARY KEY (movieid, genreid),
-    FOREIGN KEY(movieid) REFERENCES movies(movieid),
-    FOREIGN KEY(genreid) REFERENCES genres(genreid)
+    PRIMARY KEY (movieid , genreid),
+    FOREIGN KEY (movieid)
+        REFERENCES movies (movieid),
+    FOREIGN KEY (genreid)
+        REFERENCES genres (genreid)
 );
 
 -- Uncomment below to load test data into tables. 
