@@ -1,14 +1,15 @@
 -- Check for duplicate tables
 
+DROP TABLE IF EXISTS ratings;
+DROP TABLE IF EXISTS tags;
+DROP TABLE IF EXISTS hasagenre;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS movies;
 DROP TABLE IF EXISTS taginfo;
 DROP TABLE IF EXISTS genres;
-DROP TABLE IF EXISTS ratings;
-DROP TABLE IF EXISTS tags;
-DROP TABLE IF EXISTS hasagenre;
 
 -- Create 7 tables required for the database
+
 -- Just one primary key/column required to identify a unique user
 CREATE TABLE users (
 	userid INTEGER PRIMARY KEY,
@@ -38,7 +39,7 @@ CREATE TABLE genres (
 CREATE TABLE ratings (
 	userid INTEGER NOT NULL, 
     movieid INTEGER NOT NULL,
-    rating NUMERIC(2,1) CHECK(rating >= 0.0 and rating <= 5.0) NOT NULL,
+    rating NUMERIC CHECK(rating >= 0.0 and rating <= 5.0) NOT NULL,
     timestamp BIGINT NOT NULL,
     PRIMARY KEY (userid, movieid),
     FOREIGN KEY (userid) REFERENCES users(userid),
@@ -53,7 +54,7 @@ CREATE TABLE tags(
     tagid INTEGER NOT NULL,
     timestamp BIGINT NOT NULL,
     PRIMARY KEY (userid, movieid, tagid),
-    FOREIGN KEY(userid) REFERENCES users(userid),
+    FOREIGN KEY(userid) REFERENCES users(userid) ON DELETE CASCADE,
     FOREIGN KEY(movieid) REFERENCES movies(movieid),
     FOREIGN KEY(tagid) REFERENCES taginfo(tagid)
 );
