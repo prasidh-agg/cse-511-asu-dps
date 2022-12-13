@@ -1,8 +1,8 @@
 #!/usr/bin/python2.7
 #
-# Tester for the assignement1
+# Tester for the Assignment 3
 #
-DATABASE_NAME = 'dds_assignment'
+DATABASE_NAME = 'dps_assignment_3'
 
 # TODO: Change these as per your code
 RATINGS_TABLE = 'ratings'

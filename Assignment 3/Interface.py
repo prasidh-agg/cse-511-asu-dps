@@ -4,150 +4,130 @@
 #
 
 import psycopg2
+from itertools import islice
+from StringIO import StringIO
 
 
-def getOpenConnection(user='postgres', password='Cookies344!UCR', dbname='postgres'):
+def getOpenConnection(user='postgres', password='1234', dbname='postgres'):
     return psycopg2.connect("dbname='" + dbname + "' user='" + user + "' host='localhost' password='" + password + "'")
 
 
 def loadRatings(ratingstablename, ratingsfilepath, openconnection):
-    """ Inserting Ratings.dat into the Database """
-    with openconnection.cursor() as cursor:
-        sqlDropCommand = "DROP TABLE IF EXISTS {}".format(ratingstablename)
-        sqlCreateCommand = ''' CREATE TABLE {} (
-            userid INT NOT NULL,
-            movieid INT,
-            rating NUMERIC(2,1),
-            PRIMARY KEY(userid, movieid, rating))'''.format(ratingstablename)
-
-        cursor.execute(sqlDropCommand)
-        cursor.execute(sqlCreateCommand)
-
-        ratingFile = open(ratingsfilepath, "r")
-        lines = ratingFile.readlines()
-        i = 0
-        for line in lines:
-            fields = line.split("::")
-            if (i == 20):
-                break
-            sqlInsertCommand = "INSERT INTO " + ratingstablename + "(userid, movieid, rating) VALUES ({}, {}, {})".format(
-                str(fields[0]), str(fields[1]), str(fields[2]))
-            cursor.execute(sqlInsertCommand)
-            i += 1
-
-        ratingFile.close()
-        cursor.close()
+    cur = openconnection.cursor()
+    cur.execute("DROP TABLE IF EXISTS " + ratingstablename)
+    cur.execute(
+        "CREATE TABLE " + ratingstablename + "(userid INT not null, movieid INT, rating FLOAT, timestamp INT);")
+    with open(ratingsfilepath) as newFile:
+        for lines in iter(lambda: tuple(islice(newFile, 5000)), ()):
+            batch = StringIO()
+            batch.write(''.join(line.replace('::', ',') for line in lines))
+            batch.seek(0)
+            cur.copy_from(batch, ratingstablename, sep=',', columns=('userid', 'movieid', 'rating', 'timestamp'))
+    cur.execute("ALTER TABLE " + ratingstablename + " DROP timestamp")
+    cur.close()
 
 
 def rangePartition(ratingstablename, numberofpartitions, openconnection):
-    """ Partition the table based on Number of Partitions Requested """
-    with openconnection.cursor() as cursor:
-        range_condition = float(5.0 / numberofpartitions)
+    cur = openconnection.cursor()
+    db_name = 'range_part'
+    creation_query = "CREATE TABLE IF NOT EXISTS range_meta(part_number INT, from_rat FLOAT, to_rat float)"
+    cur.execute(creation_query)
 
-        for i in range(0, numberofpartitions):
-            sqlDropCommand = "DROP TABLE IF EXISTS range_part{};".format(str(i))
-            cursor.execute(sqlDropCommand)
-            j = float(i)
+    for i in range(0, numberofpartitions):
+        f = i * float(5 / numberofpartitions)
+        t = (i + 1) * float(5 / numberofpartitions)
+        db_name_part = db_name + str(i)
+        create_range = "CREATE TABLE IF NOT EXISTS {db} (UserID INT, movieID INT, Rating FLOAT)".format(db=db_name_part)
+        cur.execute(create_range)
+        openconnection.commit()
 
-            if i == 0:
-                sqlCreateCommand = "CREATE TABLE range_part{} AS SELECT * FROM {} WHERE Rating >= {} AND Rating <= {} ;".format(
-                    str(i), ratingstablename, str(j * range_condition), str((j + 1) * range_condition))
-                cursor.execute(sqlCreateCommand)
-            else:
-                sqlCreateCommand = "CREATE TABLE range_part{} AS SELECT * FROM {} WHERE Rating > {} AND Rating <= {} ;".format(
-                    str(i), ratingstablename, str(j * range_condition), str((j + 1) * range_condition))
-                cursor.execute(sqlCreateCommand)
+        if i == 0:
+            insert_range = "INSERT INTO {db} SELECT * FROM {r} WHERE {r}.rating BETWEEN {f} AND {t}  ".format(
+                db=db_name_part,
+                r=ratingstablename,
+                f=f, t=t)
 
-        cursor.close()
+        else:
+            insert_range = "INSERT INTO {db} SELECT * FROM {r} WHERE {r}.rating > {f} AND {t} >= {r}.rating ".format(
+                db=db_name_part,
+                r=ratingstablename,
+                f=f, t=t)
+
+        cur.execute(insert_range)
+        openconnection.commit()
+
+        insert_meta = "INSERT INTO range_meta VALUES ({part_number},{f},{t})".format(part_number=i, f=f, t=t)
+        cur.execute(insert_meta)
+
+        openconnection.commit()
 
 
 def roundRobinPartition(ratingstablename, numberofpartitions, openconnection):
-    """" Round Robin Partition """
-    with openconnection.cursor() as cursor:
-        if numberofpartitions < 1 or (isinstance(numberofpartitions, int) == False):
-            return
+    cur = openconnection.cursor()
+    db_name = 'rrobin_part'
+    create_query = "CREATE TABLE IF NOT EXISTS rrobin_meta(part_number INT, index INT)"
+    cur.execute(create_query)
+    openconnection.commit()
 
-        partition_list = list(reversed(range(numberofpartitions)))
-        global partitionTotal
-        global lastInsertedPosition
+    sql_temp_create = "CREATE TABLE IF NOT EXISTS rrobin_temp (UserID INT, MovieID INT, Rating FLOAT, idx INT)"
+    cur.execute(sql_temp_create)
+    openconnection.commit()
 
-        partitionTotal = numberofpartitions
-        lastInsertedPosition = 0
-        j = 0
+    sql_temp_insert = "INSERT INTO rrobin_temp (SELECT {DB}.UserID, {DB}.MovieID, {DB}.Rating , (ROW_NUMBER() OVER() -1) % {n} AS idx FROM {DB})".format(
+        n=str(numberofpartitions), DB=ratingstablename)
 
-        for i in partition_list:
-            sqlDropCommand = "DROP TABLE IF EXISTS rrobin_part{}".format(i)
-            sqlCreateTableCommand = '''CREATE TABLE rrobin_part{} (
-                                userid INT NOT NULL,
-                                movieid INT NOT NULL,
-                                rating NUMERIC(2,1))'''.format(i)
+    cur.execute(sql_temp_insert)
+    openconnection.commit()
 
-            sqlInsertCommand = ''' INSERT INTO rrobin_part{}
-                                SELECT t.userid, t.movieid, t.rating
-                                FROM(SELECT *, row_number() OVER() as row from {})t
-                                WHERE t.row % {} = {} '''.format(i, ratingstablename, numberofpartitions, i)
+    for i in range(0, numberofpartitions):
+        create_rrobin = "CREATE TABLE IF NOT EXISTS {DB} (UserID INT, MovieID INT, Rating FLOAT)".format(
+            DB=db_name + str(i))
+        cur.execute(create_rrobin)
+        openconnection.commit()
+        insert_rrobin = "INSERT INTO {DB} select userid, movieid,rating FROM rrobin_temp WHERE idx = {idx}".format(
+            DB=db_name + str(i), idx=str(i))
+        cur.execute(insert_rrobin)
+        openconnection.commit()
 
-            cursor.execute(sqlDropCommand)
-            cursor.execute(sqlCreateTableCommand)
-            cursor.execute(sqlInsertCommand)
-
-            sqlRowNumberCommand = "SELECT COUNT(*) FROM rrobin_part{};".format(i)
-            rowNumber = cursor.execute(sqlRowNumberCommand)
-
-            if rowNumber > j:
-                lastInsertedPosition = i
-                j = rowNumber
-
-        cursor.close()
+    sql_meta_insert = "INSERT INTO rrobin_meta SELECT {N} AS part_number, count(*) % {N} FROM {DB}".format(
+        DB=ratingstablename, N=numberofpartitions)
+    cur.execute(sql_meta_insert)
+    openconnection.commit()
+    deleteTables('rrobin_temp', openconnection)
+    openconnection.commit()
 
 
 def roundrobininsert(ratingstablename, userid, itemid, rating, openconnection):
-    """ Round Robin Insert """
-    if rating > 5.0 or rating < 0.0:
-        return
+    cur = openconnection.cursor()
+    cur.execute(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'rrobin_part%';")
 
-    with openconnection.cursor() as cursor:
-        global partitionTotal
-        global lastInsertedPosition
-        lastPart = lastInsertedPosition % partitionTotal
+    number_of_partitions = int(cur.fetchone()[0])
+    cur.execute("SELECT COUNT (*) FROM " + ratingstablename + ";")
+    max_rows = int(cur.fetchone()[0])
+    n = max_rows % number_of_partitions
+    cur.execute("INSERT INTO rrobin_part" + str(n) + " (UserID,MovieID,Rating) VALUES (" + str(userid) + "," + str(
+        itemid) + "," + str(rating) + ");")
 
-        sqlInsertCommand = "INSERT INTO rrobin_part{} (userid, movieid, rating) VALUES ({}, {}, {})".format((lastPart),
-                                                                                                            userid,
-                                                                                                            itemid,
-                                                                                                            rating)
-
-        cursor.execute(sqlInsertCommand)
-
-        lastInsertedPosition += 1
-
-        if lastInsertedPosition == 5:
-            lastInsertedPosition = 0
-
-        cursor.close()
+    cur.close()
 
 
 def rangeinsert(ratingstablename, userid, itemid, rating, openconnection):
-    """ Range Insert """
-    with openconnection.cursor() as cursor:
-        Lower = partitionnumber = 0
-        Upper = 1.0
+    cur = openconnection.cursor()
+    selection_query = "SELECT MIN(r.part_number) FROM range_meta AS r WHERE r.from_rat <= {rat} AND r.to_rat >= {rat} ".format(
+        rat=rating)
+    cur.execute(selection_query)
+    openconnection.commit()
 
-        while Lower < 5.0:
-            if Lower == 0:
-                if rating >= Lower and rating <= Upper:
-                    break
-            else:
-                if rating > Lower and rating <= Upper:
-                    break
+    part_number = cur.fetchone()
+    p_number = part_number[0]
+    rate_insert = "INSERT INTO {db} values ({u},{it},{r})".format(db=ratingstablename, u=userid, it=itemid, r=rating)
+    cur.execute(rate_insert)
+    openconnection.commit()
 
-            partitionnumber += 1
-            Lower += 1.0
-            Upper += 1.0
-
-        sqlInsertCommand = "INSERT INTO range_part{} (userid, movieid, rating) VALUES ({}, {}, {})".format(
-            partitionnumber, userid, itemid, rating)
-        cursor.execute(sqlInsertCommand)
-        cursor.close()
+    range_insert = "INSERT INTO range_part{i} values ({u},{it},{r})".format(i=p_number, u=userid, it=itemid, r=rating)
+    cur.execute(range_insert)
+    openconnection.commit()
 
 
 def createDB(dbname='dds_assignment'):

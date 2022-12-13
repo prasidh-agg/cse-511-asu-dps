@@ -8,7 +8,7 @@ MOVIE_ID_COLNAME = 'movieid'
 RATING_COLNAME = 'rating'
 
 # SETUP Functions
-def createDB(dbname='dds_assignment'):
+def createDB(dbname='dps_assignment_3'):
     """
     We create a DB by connecting to the default user and database of Postgres
     The function first checks if an existing database exists for a given name, else creates it.
@@ -51,7 +51,7 @@ def deleteAllPublicTables(openconnection):
 
     cur.close()
 
-def getOpenConnection(user='postgres', password='1234', dbname='postgres'):
+def getOpenConnection(user='newuser', password='password', dbname='postgres'):
     return psycopg2.connect("dbname='" + dbname + "' user='" + user + "' host='localhost' password='" + password + "'")
 
 

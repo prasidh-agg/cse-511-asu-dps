@@ -92,8 +92,7 @@ WHERE movieid IN (SELECT hg.movieid
                                     END) = 0
 				  AND COUNT(CASE 
 									WHEN g.name = 'Romance' THEN 1 
-                                    END) = 1
-				  );
+                                    END) = 1);
 
 
 -- Q9
